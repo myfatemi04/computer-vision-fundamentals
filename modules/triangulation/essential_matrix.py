@@ -13,6 +13,9 @@ import os
 import cv2
 import numpy as np
 from matplotlib import pyplot as plt
+from matplotlib.backend_bases import MouseEvent
+from matplotlib.collections import PathCollection
+from matplotlib.lines import Line2D
 
 from ..camera import Camera
 from .load_image import image_to_1080p
@@ -88,7 +91,7 @@ for i in range(8):
     ).reshape(9)
 
 # Lowest singular value is last.
-U, S, Vh = np.linalg.svd(A.T @ A)
+U, S, Vh = np.linalg.svd(A)  # .T @ A)
 
 print(S)
 
@@ -150,7 +153,7 @@ plt.subplot(1, 2, 1)
 plt.imshow(left)
 
 for i in range(8):
-    a, b, c = get_epipolar_line(left_correspondences[i], F)
+    a, b, c = get_epipolar_line(right_correspondences[i], F.T)
 
     # Solve for x = 0.
     # ax + by = c
@@ -171,7 +174,7 @@ plt.subplot(1, 2, 2)
 plt.imshow(right)
 
 for i in range(8):
-    a, b, c = get_epipolar_line(right_correspondences[i], F.T)
+    a, b, c = get_epipolar_line(left_correspondences[i], F)
 
     # Solve for x = 0.
     # ax + by = c
@@ -190,3 +193,90 @@ for i in range(8):
 
 plt.tight_layout()
 plt.show()
+
+
+# Now, we can have an interactive version.
+
+
+def interactive_demo():
+    selected_point_side = "left"
+    selected_point = (0, 0)
+
+    left_axes = plt.subplot(1, 2, 1)
+    left_axes.imshow(left)
+
+    right_axes = plt.subplot(1, 2, 2)
+    right_axes.imshow(right)
+
+    def click_callback(event: MouseEvent):
+        nonlocal selected_point_side, selected_point
+
+        if event.inaxes is None:
+            return
+
+        if event.inaxes == left_axes:
+            selected_point_side = "left"
+        else:
+            selected_point_side = "right"
+
+        selected_point = (event.xdata, event.ydata)
+
+    plt.gcf().canvas.mpl_connect(
+        "button_release_event",
+        click_callback,  # type: ignore
+    )
+
+    plt.tight_layout()
+
+    while 1:
+        # Clear the list of artists.
+        for artist in [*left_axes.get_children(), *right_axes.get_children()]:
+            if isinstance(artist, (PathCollection, Line2D)):
+                artist.remove()
+            else:
+                print(artist)
+
+        if selected_point_side == "left":
+            left_axes.scatter(selected_point[0], selected_point[1], c="red", s=5)
+        else:
+            a, b, c = get_epipolar_line(np.array(selected_point), F.T)
+
+            # Solve for x = 0.
+            # ax + by = c
+            # y = c/b
+
+            # Solve for x = right.width
+            # a(right.width) + by = c
+            # y = (c - a * (right.width)) / b
+
+            left_axes.plot(
+                [0, right.shape[1] - 1],
+                [c / b, (c - a * (right.shape[1])) / b],
+                c="blue",
+            )
+
+        if selected_point_side == "right":
+            right_axes.scatter(selected_point[0], selected_point[1], c="red", s=5)
+        else:
+            a, b, c = get_epipolar_line(np.array(selected_point), F)
+
+            # Solve for x = 0.
+            # ax + by = c
+            # y = c/b
+
+            # Solve for x = right.width
+            # a(right.width) + by = c
+            # y = (c - a * (right.width)) / b
+
+            right_axes.plot(
+                [0, right.shape[1] - 1],
+                [c / b, (c - a * (right.shape[1])) / b],
+                c="blue",
+            )
+
+        plt.pause(0.01)
+
+    plt.show()
+
+
+interactive_demo()
