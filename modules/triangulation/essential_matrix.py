@@ -20,37 +20,6 @@ from matplotlib.lines import Line2D
 from ..camera import Camera
 from .load_image import image_to_1080p
 
-base = os.path.abspath(os.path.dirname(__file__))
-
-left = image_to_1080p(cv2.imread(base + "/IMG_9728.JPG"))
-right = image_to_1080p(cv2.imread(base + "/IMG_9729.JPG"))
-left = cv2.cvtColor(left, cv2.COLOR_BGR2RGB)
-right = cv2.cvtColor(right, cv2.COLOR_BGR2RGB)
-
-correspondences = np.loadtxt(base + "/selections.txt", skiprows=1, delimiter=",")
-left_correspondences = correspondences[:8, 2:]
-right_correspondences = correspondences[8:, 2:]
-
-camera = Camera.from_calibration_file(
-    "modules/calibs/iphone12promax_continuity_camera.json"
-)
-
-# Rectify points.
-left_correspondences_rect = camera.rectify_points(left_correspondences)
-
-# Create object points.
-left_correspondences_canonical_obj = camera.rectified_to_homogeneous(
-    left_correspondences_rect
-)
-
-# Measure reprojection error.
-projected = camera.project_points(left_correspondences_canonical_obj)
-
-print("Reprojection error:", np.linalg.norm(projected - left_correspondences), "pixels")
-
-# Now, we can compute the essential matrix. We use the 8-point algorithm, which solves a least-squares problem.
-# min |Ax| subject to |x| = 1, where x is a vector representing the entries of the Essential Matrix.
-
 
 # Create an intrinsic matrix...
 def get_normalized_image_points(points: np.ndarray):
@@ -65,59 +34,6 @@ def get_normalized_image_points(points: np.ndarray):
     points_norm = points_homogeneous @ K.T
 
     return points_norm[:, :2], K
-
-
-left_correspondences = camera.rectify_points(left_correspondences)
-right_correspondences = camera.rectify_points(right_correspondences)
-
-# Normalize correspondences for numerical stability.
-# These transformations are linear, so we will fuse them into the Fundamental matrix created
-# from the normalized points.
-left_corr_norm, left_normalizing_intrins = get_normalized_image_points(
-    left_correspondences
-)
-right_corr_norm, right_normalizing_intrins = get_normalized_image_points(
-    right_correspondences
-)
-
-
-# Create weights for homogeneous linear system.
-A = np.zeros((8, 9))
-for i in range(8):
-    # (3, 1) @ (1, 3) -> (3, 3) -> 9
-    A[i] = (
-        np.array([*left_corr_norm[i], 1])[:, None]
-        @ np.array([*right_corr_norm[i], 1])[None, :]
-    ).reshape(9)
-
-# Lowest singular value is last.
-U, S, Vh = np.linalg.svd(A)  # .T @ A)
-
-print(S)
-
-F_normalized = Vh[-1].reshape(3, 3)
-
-# Invert the normalization that was performed for numerical stability.
-F = left_normalizing_intrins.T @ F_normalized @ right_normalizing_intrins
-
-# Project to rank-2 matrix.
-FU, FS, FVh = np.linalg.svd(F)
-
-FS[-1] = 0
-F = FU @ np.diag(FS) @ FVh
-
-# Make F unit norm.
-F = F / np.linalg.norm(F)
-
-# Verify that the fundamental matrix equality constraint holds.
-for i in range(8):
-    print(
-        np.array([*left_correspondences[i], 1])[None, :]
-        @ F
-        @ np.array([*right_correspondences[i], 1])[:, None]
-    )
-
-print(F)
 
 
 # Let's make a function that generates an epipolar line.
@@ -145,60 +61,71 @@ def get_epipolar_line(left_point: np.ndarray, F: np.ndarray):
     return a, b, c
 
 
-# Now, we can plot the correspondences.
+def compute_fundamental_matrix(
+    camera: Camera, left_correspondences, right_correspondences
+):
+    # Now, we can compute the essential matrix. We use the 8-point algorithm, which solves a least-squares problem.
+    # min |Ax| subject to |x| = 1, where x is a vector representing the entries of the Essential Matrix.
+    left_correspondences = camera.rectify_points(left_correspondences)
+    right_correspondences = camera.rectify_points(right_correspondences)
 
-colors = ["red", "orange", "yellow", "green", "blue", "pink", "gold", "lightgrey"]
-
-plt.subplot(1, 2, 1)
-plt.imshow(left)
-
-for i in range(8):
-    a, b, c = get_epipolar_line(right_correspondences[i], F.T)
-
-    # Solve for x = 0.
-    # ax + by = c
-    # y = c/b
-
-    # Solve for x = right.width
-    # a(right.width) + by = c
-    # y = (c - a * (right.width)) / b
-
-    plt.scatter(
-        [left_correspondences[i, 0]], [left_correspondences[i, 1]], c=colors[i], s=5
+    # Normalize correspondences for numerical stability.
+    # These transformations are linear, so we will fuse them into the Fundamental matrix created
+    # from the normalized points.
+    left_corr_norm, left_normalizing_intrins = get_normalized_image_points(
+        left_correspondences
     )
-    plt.plot(
-        [0, right.shape[1] - 1], [c / b, (c - a * (right.shape[1])) / b], c=colors[i]
+    right_corr_norm, right_normalizing_intrins = get_normalized_image_points(
+        right_correspondences
     )
 
-plt.subplot(1, 2, 2)
-plt.imshow(right)
+    # Create weights for homogeneous linear system.
+    A = np.zeros((8, 9))
+    for i in range(8):
+        # (3, 1) @ (1, 3) -> (3, 3) -> 9
+        A[i] = (
+            np.array([*left_corr_norm[i], 1])[:, None]
+            @ np.array([*right_corr_norm[i], 1])[None, :]
+        ).reshape(9)
 
-for i in range(8):
-    a, b, c = get_epipolar_line(left_correspondences[i], F)
+    # Lowest singular value is last.
+    U, S, Vh = np.linalg.svd(A)  # .T @ A)
 
-    # Solve for x = 0.
-    # ax + by = c
-    # y = c/b
+    # print(S)
 
-    # Solve for x = right.width
-    # a(right.width) + by = c
-    # y = (c - a * (right.width)) / b
+    F_normalized = Vh[-1].reshape(3, 3)
 
-    plt.scatter(
-        [right_correspondences[i, 0]], [right_correspondences[i, 1]], c=colors[i], s=5
-    )
-    plt.plot(
-        [0, right.shape[1] - 1], [c / b, (c - a * (right.shape[1])) / b], c=colors[i]
-    )
+    # Invert the normalization that was performed for numerical stability.
+    F = left_normalizing_intrins.T @ F_normalized @ right_normalizing_intrins
 
-plt.tight_layout()
-plt.show()
+    # Project to rank-2 matrix.
+    FU, FS, FVh = np.linalg.svd(F)
+
+    FS[-1] = 0
+    F = FU @ np.diag(FS) @ FVh
+
+    # Make F unit norm.
+    F = F / np.linalg.norm(F)
+
+    # Verify that the fundamental matrix equality constraint holds.
+    # for i in range(8):
+    #     print(
+    #         np.array([*left_correspondences[i], 1])[None, :]
+    #         @ F
+    #         @ np.array([*right_correspondences[i], 1])[:, None]
+    #     )
+
+    # print(F)
+
+    return F
 
 
 # Now, we can have an interactive version.
+def interactive_demo(
+    left, right, camera: Camera, left_correspondences, right_correspondences
+):
+    F = compute_fundamental_matrix(camera, left_correspondences, right_correspondences)
 
-
-def interactive_demo():
     selected_point_side = "left"
     selected_point = (0, 0)
 
@@ -280,4 +207,97 @@ def interactive_demo():
     plt.show()
 
 
-interactive_demo()
+def main():
+    base = os.path.abspath(os.path.dirname(__file__))
+
+    left = image_to_1080p(cv2.imread(base + "/IMG_9728.JPG"))
+    right = image_to_1080p(cv2.imread(base + "/IMG_9729.JPG"))
+    left = cv2.cvtColor(left, cv2.COLOR_BGR2RGB)
+    right = cv2.cvtColor(right, cv2.COLOR_BGR2RGB)
+    camera = Camera.from_calibration_file(
+        "modules/calibs/iphone12promax_continuity_camera.json"
+    )
+
+    correspondences = np.loadtxt(base + "/selections.txt", skiprows=1, delimiter=",")
+    left_correspondences = correspondences[:8, 2:]
+    right_correspondences = correspondences[8:, 2:]
+
+    F = compute_fundamental_matrix(camera, left_correspondences, right_correspondences)
+
+    # Rectify points.
+    left_correspondences_rect = camera.rectify_points(left_correspondences)
+
+    # Create object points.
+    left_correspondences_canonical_obj = camera.rectified_to_homogeneous(
+        left_correspondences_rect
+    )
+
+    # Measure reprojection error.
+    projected = camera.project_points(left_correspondences_canonical_obj)
+
+    print(
+        "Reprojection error:",
+        np.linalg.norm(projected - left_correspondences),
+        "pixels",
+    )
+
+    # Now, we can plot the correspondences.
+    colors = ["red", "orange", "yellow", "green", "blue", "pink", "gold", "lightgrey"]
+
+    plt.subplot(1, 2, 1)
+    plt.imshow(left)
+
+    for i in range(8):
+        a, b, c = get_epipolar_line(right_correspondences[i], F.T)
+
+        # Solve for x = 0.
+        # ax + by = c
+        # y = c/b
+
+        # Solve for x = right.width
+        # a(right.width) + by = c
+        # y = (c - a * (right.width)) / b
+
+        plt.scatter(
+            [left_correspondences[i, 0]], [left_correspondences[i, 1]], c=colors[i], s=5
+        )
+        plt.plot(
+            [0, right.shape[1] - 1],
+            [c / b, (c - a * (right.shape[1])) / b],
+            c=colors[i],
+        )
+
+    plt.subplot(1, 2, 2)
+    plt.imshow(right)
+
+    for i in range(8):
+        a, b, c = get_epipolar_line(left_correspondences[i], F)
+
+        # Solve for x = 0.
+        # ax + by = c
+        # y = c/b
+
+        # Solve for x = right.width
+        # a(right.width) + by = c
+        # y = (c - a * (right.width)) / b
+
+        plt.scatter(
+            [right_correspondences[i, 0]],
+            [right_correspondences[i, 1]],
+            c=colors[i],
+            s=5,
+        )
+        plt.plot(
+            [0, right.shape[1] - 1],
+            [c / b, (c - a * (right.shape[1])) / b],
+            c=colors[i],
+        )
+
+    plt.tight_layout()
+    plt.show()
+
+    interactive_demo(left, right, camera, left_correspondences, right_correspondences)
+
+
+if __name__ == "__main__":
+    main()
