@@ -202,6 +202,9 @@ def interactive_demo():
     selected_point_side = "left"
     selected_point = (0, 0)
 
+    plt.gcf().set_figwidth(12)
+    plt.gcf().set_figheight(4)
+
     left_axes = plt.subplot(1, 2, 1)
     left_axes.imshow(left)
 
@@ -233,8 +236,6 @@ def interactive_demo():
         for artist in [*left_axes.get_children(), *right_axes.get_children()]:
             if isinstance(artist, (PathCollection, Line2D)):
                 artist.remove()
-            else:
-                print(artist)
 
         if selected_point_side == "left":
             left_axes.scatter(selected_point[0], selected_point[1], c="red", s=5)
