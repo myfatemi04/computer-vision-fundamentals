@@ -4,3 +4,4 @@ env/
 
 # Anything that we don't want to go on Github.
 scratch
+**/.DS_Store

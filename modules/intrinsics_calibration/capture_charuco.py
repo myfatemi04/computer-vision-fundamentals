@@ -18,12 +18,14 @@ PIXEL_WIDTH_MM = SCREEN_WIDTH_MM / SCREEN_WIDTH_PX
 PIXEL_HEIGHT_MM = SCREEN_HEIGHT_MM / SCREEN_HEIGHT_PX
 
 
-def make_charuco_board(width: int, height: int, square_size_mm: float):
+def make_charuco_board(
+    width: int, height: int, square_size_mm: float, dictionary=cv2.aruco.DICT_7X7_100
+):
     square_size_px = square_size_mm / PIXEL_WIDTH_MM
     image_size = (int(square_size_px * width), int(square_size_px * height))
     margin_size = int(square_size_px / 2)
 
-    dictionary = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_7X7_100)
+    dictionary = cv2.aruco.getPredefinedDictionary(dictionary)
     board = cv2.aruco.CharucoBoard(
         (width, height),
         square_size_px,
@@ -50,11 +52,11 @@ def main():
         "-H", "--height", default=7, help="ChArUco board height (default: 7)"
     )
     parser.add_argument(
-        "-c",
-        "--camera_id",
-        default=1,
-        help="Camera ID. You may use 1 for Continuity Camera.",
-        type=int,
+        "-s",
+        "--source",
+        default="camera:1",
+        help="The source to use. You can either specify a string of the form 'camera:X', for a camera device ID, or a path (any string that does not begin with 'camera:'), or the string 'future_video' to export the ChArUco board to an image file that can be opened on your screen.",
+        type=str,
     )
     ns = parser.parse_args()
     output_path = Path(ns.output_path)
@@ -77,12 +79,21 @@ def main():
     detections = {"object_points": [], "image_points": []}
     detections_counter = 0
 
-    camera_id = ns.camera_id
-    cap = cv2.VideoCapture(camera_id)
-    DOWNSAMPLE = 2
+    source = ns.source
 
-    if not os.path.exists("frames"):
-        os.mkdir("frames")
+    cv2.imwrite(str(output_path / "charuco.png"), checkerboard_image)
+    if source == "future_video":
+        return
+
+    elif source.startswith("camera:"):
+        source = int(source[7:])
+
+    else:
+        if not os.path.exists(source):
+            raise ValueError("Path for source video does not exist: " + source)
+
+    cap = cv2.VideoCapture(source)
+    DOWNSAMPLE = 2
 
     while 1:
         ret, frame = cap.read()
