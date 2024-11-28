@@ -1,8 +1,11 @@
 import os
+from pathlib import Path
 import pickle
 
 import cv2
 import numpy as np
+import argparse
+from .calibrate_intrinsics_charuco import calibrate
 
 SCREEN_WIDTH_PX = 1728
 SCREEN_HEIGHT_PX = 1117
@@ -28,32 +31,55 @@ def make_charuco_board(width: int, height: int, square_size_mm: float):
         dictionary,
     )
     image = board.generateImage(image_size, marginSize=margin_size)
-    object_points = board.getObjPoints()
 
-    return image, object_points, board
+    return image, board
 
 
 def main():
-    checkerboard_width = 8
-    checkerboard_height = 7
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "-o",
+        "--output_path",
+        required=True,
+        help="Path to store calibration result in.",
+    )
+    parser.add_argument(
+        "-W", "--width", default=8, help="ChArUco board width (default: 8)"
+    )
+    parser.add_argument(
+        "-H", "--height", default=7, help="ChArUco board height (default: 7)"
+    )
+    parser.add_argument(
+        "-c",
+        "--camera_id",
+        default=1,
+        help="Camera ID. You may use 1 for Continuity Camera.",
+        type=int,
+    )
+    ns = parser.parse_args()
+    output_path = Path(ns.output_path)
+
+    if not output_path.exists():
+        output_path.mkdir(parents=True, exist_ok=True)
+        (output_path / "frames").mkdir(parents=True, exist_ok=True)
+
+    checkerboard_width = ns.width
+    checkerboard_height = ns.height
     checkerboard_square_size_mm = 10
-    checkerboard_image, checkerboard_object_points, board = make_charuco_board(
+    checkerboard_image, board = make_charuco_board(
         checkerboard_width, checkerboard_height, checkerboard_square_size_mm
     )
     cv2.imshow("ChArUco Board", checkerboard_image)
     cv2.waitKey(1)
 
-    print(checkerboard_object_points)
-
     detector = cv2.aruco.CharucoDetector(board)
 
-    detections = {
-        "object_points": [],
-        "image_points": [],
-    }
+    detections = {"object_points": [], "image_points": []}
+    detections_counter = 0
 
-    cap = cv2.VideoCapture(1)
-    DOWNSCALE = 2
+    camera_id = ns.camera_id
+    cap = cv2.VideoCapture(camera_id)
+    DOWNSAMPLE = 2
 
     if not os.path.exists("frames"):
         os.mkdir("frames")
@@ -65,7 +91,7 @@ def main():
             break
 
         frame_original = frame
-        frame = np.ascontiguousarray(frame[::DOWNSCALE, ::DOWNSCALE, :])
+        frame = np.ascontiguousarray(frame[::DOWNSAMPLE, ::DOWNSAMPLE, :])
 
         frame_gray = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
 
@@ -73,9 +99,7 @@ def main():
         charuco_corners, charuco_ids, marker_corners, marker_ids = detector.detectBoard(
             frame_gray
         )
-        corners_ = charuco_corners
-
-        if corners_ is not None:
+        if charuco_corners is not None:
             # Draw the result on the frame.
             cv2.aruco.drawDetectedCornersCharuco(frame, charuco_corners, charuco_ids)
 
@@ -84,11 +108,20 @@ def main():
                 charuco_ids,
             )
 
-            # Store the detection.
-            detections["object_points"].append(detected_object_points)
-            detections["image_points"].append(detected_image_points)
+            if detected_image_points.shape[0] >= 6:
+                # (n, 1, 3) -> (n, 3)
+                detected_image_points = detected_image_points[:, 0, :]
+                detected_object_points = detected_object_points[:, 0, :]
 
-            cv2.imwrite(f"frames/frame_{len(detections)}.jpg", frame_original)
+                # Store the detection.
+                detections["object_points"].append(detected_object_points)
+                detections["image_points"].append(detected_image_points * DOWNSAMPLE)
+
+                cv2.imwrite(
+                    str(output_path / "frames" / f"frame_{detections_counter}.jpg"),
+                    frame_original,
+                )
+                detections_counter += 1
 
         cv2.imshow("Frame", frame)
         if ord("q") == cv2.waitKey(1):
@@ -97,10 +130,12 @@ def main():
     cap.release()
 
     # Store the detected frames to disk.
-    with open("detections.pkl", "wb") as f:
+    with open(output_path / "detections.pkl", "wb") as f:
         pickle.dump(detections, f)
 
-    np.save("object_points.npy", checkerboard_object_points)
+    # Now, run the calibration itself, on the detection results.
+    print(f"... Running calibration on path {output_path} ...")
+    calibrate(output_path, save=True)
 
 
 if __name__ == "__main__":

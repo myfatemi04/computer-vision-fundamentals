@@ -1,3 +1,6 @@
 repos
 env/
 **/__pycache__/
+
+# Anything that we don't want to go on Github.
+scratch
